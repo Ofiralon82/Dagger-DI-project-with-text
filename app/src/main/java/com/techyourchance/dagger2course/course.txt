@@ -1,0 +1,315 @@
+
+Dagger 2:
+**@Module** - (CompositionRoot) - the class that contains all the function that provide an object or a service.
+you shouldn't use Modules by yourself
+
+**@Provides** - provide services. a function that can be provided to dagger graph.
+- you don't call a function inside a function that provide a service in dagger. instead you inject it as a property and Dagger will understand:
+Provided services can be used as method argument in other provider methods
+@Provides
+fun layoutInflater = activityCompositionRoot.layoutInflater
+
+@Provides
+fun viewMvcFactory(layoutInflater: LayoutInflater) = ViewMvcFactory(layoutInflater)
+
+**@Component** - interface. a wrapper around Dagger Module. when we specify a module, the component get access to the providers. this way, it can expose them.
+later: Components are basically injectors. it know how to take Module objects and inject them into client.
+@Component(modules = [PresentationModule::class])
+interface PresentationComponent {
+    fun viewMvcFactory(): ViewMvcFactory      - this is how component expose properties from its modules if not using the inject fun (later on this page)
+}
+
+we can build and use Component:
+private val presentationComponent by lazy {
+    DaggerPresentationComponent.builder()
+    .presentationModule(PresentationModule(activityCompositionRoot))
+    .build()
+}
+
+**@Scope** intent to have the same instance in a scope. we need the scope annotation in the @Provides and @Component.
+scopes only scope services to components.
+- All clients get the same instance of a scope service FROM THE SAME INSTANCE of a component
+
+@Scope
+annotation class ActivityScope {}
+
+in @Module:
+@Provides
+@ActivityScope
+fun screenNavigator(activity: AppCompatActivity) = ScreenNavigator(activity)
+
+in @Component:
+@ActivityScope
+@Component(modules = [PresentationModule::class])
+interface PresentationComponent
+
+**@Singleton** - a scope that is a singleton. (build in scope)
+need to be written in @Provides and in @Component as well.
+
+**@Component(dependencies = [ActivityComponent::class, modules[PresentationModule::class])**
+interface PresentationComponent{...
+
+together with:
+- add scope for PresentationComponent
+- component expose fun for it's modules funs (and not by inject funs): in ActivityComponent: fun stackOverFlowApi(): StackOverFlowApi
+and in presentationComponent: fun inject(activity: QuestionActivity)
+we will see how SubComponent resolves this
+- DaggerPresentationComponent.builder()
+.activityComponent(activityComponent)
+.presentationModule(PresentationModule())
+.build()
+
+now presentation component will be depend on ActivityComponent means all the modules that this presentationComponent
+uses will get access to all the services expose on ActivityComponent.
+
+I'm in lecture 52
+
+**inject fun inside component**
+fun inject(activity: MainActivity)
+together with:
+component.inject(this) in activity
+and a field inside activity:
+@Inject
+lateinit var lion: Lion
+will inject the lion as a property.
+
+**@SubComponent**
+if we declare PresentationComponent as SubComponent of ActivityComponent:
+@PresentationScope
+@SubComponent(modules = [PresentationModule])
+interface PresentationComponent {
+    fun inject(fragment: QuestionFragment)
+    fun inject(activity: QuestionActivity)
+}
+
+and we will remove from Activity component all the functions that its expose (a delegation to its modules) and write a builder:
+
+fun newPresentationComponent(presentationModule: PresentationModule): PresentationComponent
+
+this way we add to activityComponent the presentationComponent
+and to get an instance of the presentationComponent:
+activityComponent.newPresentationComponent(PresentationModule())
+
+subComponents get access to all services provided by parent (provided, not just exposed)
+
+**multiple modules**
+we can add multiple modules to a component
+once we did that we don't need a module instance when building it: Dagger automatically instantiate modules with no-argument constructor
+fun newPresentationComponent(presentationModule: PresentationModule): PresentationComponent
+became:
+fun newPresentationComponent(): PresentationComponent
+
+and
+activityComponent.newPresentationComponent(PresentationModule())
+became:
+activityComponent.newPresentationComponent()
+
+the modules are shared between modules!!
+
+**@Inject**
+instead of all what written here, if we add @Inject to constructor we don't need to have nothing else in modules or components. we basically don't need module now.
+and his summary: Dagger can automatically discover services having a public constructor annotated with @Inject annotation
+
+**Builder, @BindsInstance** - pattern that allow us to chain calls to different functions and than call this build to get our component
+to make the code more optimal we can use companion object and put all providers there.
+but we inject there an activity and it cannot be at the companion object
+
+so, inside ActivityComponent:
+
+@Component.builder  //or @SubComponent
+interface Builder {
+    fun build(): ActivityComponent    - in charge to instantiate ActivityComponent
+    fun activityModule(activityModule: ActivityModule): Builder   - this component requires activityModule
+    @BindsInstance fun activity(activity: AppCompatActivity): Builder    - supply activity here instead of inside activityModule constructor
+    //BindsInstance   - for object to be available in dagger graph that is not module or component
+}
+
+once we have a builder inside, we cannot construct this component directly any more. instead, in AppComponent:
+was:
+fun newActivityComponent(activityModule: ActivityModule): ActivityComponent
+and now:
+fun newActivityComponentBuilder(): ActivityComponent.Builder
+
+now we can remove activity from activityModule constructor and make it an object and not just class
+
+working with interfaces:
+**@Binds**
+
+@Binds
+fun screenNavigator(screenNavigatorImpl: ScreenNavigatorImpl): ScreenNavigator
+but, it cannot be a fun because of its interface. so we need to make it abstract along with the class - from object to abstract
+
+**@Qualifier**
+when we want dagger to supplies two different retrofit objects for example (for two different backends with different BASE_URL)
+Qualifier become part of the type
+
+@Qualifier
+annotation class Retrofit1{ }
+
+and we need to annotate:
+@Retrofit1
+fun retrofit1() retrofit{...
+
+and:
+fun stackOverFlowApi(@Retrofit1 retrofit: Retrofit) = retrofit.create...
+
+there is a convention for that and instead of writing our own Qualifier we can use **@Named**:
+@Named("retrofit1") for example
+
+**Provider<T>**
+it basically says take the caricaturist details from dagger
+when we inject an object ito some class but we want different types of that object we need to:
+class ViewMvcFactory @Inject contractor(private val imageLoaderProvider: Provider<ImageLoader>)
+
+val imageLoader1 = imageLoaderProvider.get()
+val imageLoader2 = imageLoaderProvider.get()
+- different objects
+note that if this has a scope all gets will have the same instance
+
+
+**ViewModel**
+has it's own configuration for instantiate viewmodels with factory etc etc
+
+Hilt: use Hilt doc!!! very clear
+we will replace our own conventions with Hilt conventions:
+
+**@HiltAndroidApp** - for app class
+**@AndroidEntryPoint** - for activities, fragments, services etc
+**InstallIn** - in what built-in component it should be available. Singleton (application), activity etc
+**@HiltViewModel** together with @Inject in viewmodel and private val zooViewModel: ZooViewModel by viewModel()
+
+Hilt summary:
+using dagger with additional conventions/restrictions
+
+main features:
+ - use predefined set of implicit Components
+ - each predefined Component is associated with predefined Scope
+ - automatically provides specific bootstrapping services (like providing application, activity etc)
+ - Modules specify in which Components they should be installed
+ - simplified ViewModel handling
+
+ potential concerns:
+ - bugs
+ - impact on build time
+ - clean and build stability
+
+ https://developer.android.com/training/dependency-injection/hilt-android
+
+ https://dagger.dev/hilt/components.html
+
+ Unlike traditional Dagger, Hilt users never define or instantiate Dagger components directly
+
+ // This binding is "unscoped".
+ // Each request for this binding will get a new instance.
+ final class UnscopedBinding {
+   @Inject UnscopedBinding() {}
+ }
+
+ // This binding is "scoped".
+ // Each request from the same component instance for this binding will
+ // get the same instance. Since this is the fragment component, this means
+ // each request from the same fragment.
+ @FragmentScoped
+ final class ScopedBinding {
+   @Inject ScopedBinding() {}
+ }
+
+
+
+
+ class AnalyticsServiceImpl @Inject constructor(
+   @ApplicationContext context: Context
+ ) : AnalyticsService { ... }
+
+ // The Application binding is available without qualifiers.
+ class AnalyticsServiceImpl @Inject constructor(
+   application: Application
+ ) : AnalyticsService { ... }
+
+
+
+
+ class AnalyticsAdapter @Inject constructor(
+   @ActivityContext context: Context
+ ) { ... }
+
+ // The Activity binding is available without qualifiers.
+ class AnalyticsAdapter @Inject constructor(
+   activity: FragmentActivity
+ ) { ... }
+
+
+
+ more examples:
+
+ - injecting context to analytics for example:
+ class AnalyticsAdapter @Inject constructor(
+     @ActivityContext private val context: Context,
+     private val service: AnalyticsService
+ ) { ... }
+
+
+
+Hilt component	Injector for
+SingletonComponent	Application
+ActivityRetainedComponent	N/A
+ViewModelComponent	ViewModel
+ActivityComponent	Activity
+FragmentComponent	Fragment
+ViewComponent	View
+ViewWithFragmentComponent	View annotated with @WithFragmentBindings
+ServiceComponent	Service
+
+
+
+Component lifetimes:
+Generated component	Created at	Destroyed at
+SingletonComponent	Application#onCreate()	Application#onDestroy()
+ActivityRetainedComponent	Activity#onCreate()	Activity#onDestroy()
+ViewModelComponent	ViewModel created	ViewModel destroyed
+ActivityComponent	Activity#onCreate()	Activity#onDestroy()
+FragmentComponent	Fragment#onAttach()	Fragment#onDestroy()
+ViewComponent	View#super()	View destroyed
+ViewWithFragmentComponent	View#super()	View destroyed
+ServiceComponent	Service#onCreate()	Service#onDestroy()
+
+
+
+Hilt component	Injector for
+SingletonComponent	Application
+ActivityRetainedComponent	N/A
+ViewModelComponent	ViewModel
+ActivityComponent	Activity
+FragmentComponent	Fragment
+ViewComponent	View
+ViewWithFragmentComponent	View annotated with @WithFragmentBindings
+ServiceComponent	Service
+
+
+Android class	Generated component	Scope
+Application	SingletonComponent	@Singleton
+Activity	ActivityRetainedComponent	@ActivityRetainedScoped
+ViewModel	ViewModelComponent	@ViewModelScoped
+Activity	ActivityComponent	@ActivityScoped
+Fragment	FragmentComponent	@FragmentScoped
+View	ViewComponent	@ViewScoped
+View annotated with @WithFragmentBindings	ViewWithFragmentComponent	@ViewScoped
+Service	ServiceComponent	@ServiceScoped
+
+
+The following example demonstrates how to scope a binding to a component in a Hilt module.
+ A binding's scope must match the scope of the component where it is installed,
+  so in this example you must install AnalyticsService in SingletonComponent instead of ActivityComponent:
+
+// If AnalyticsService is an interface.
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class AnalyticsModule {
+
+  @Singleton
+  @Binds
+  abstract fun bindAnalyticsService(
+    analyticsServiceImpl: AnalyticsServiceImpl
+  ): AnalyticsService
+}
+
